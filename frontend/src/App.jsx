@@ -1,11 +1,7 @@
-﻿import { Button } from "@/components/ui/button"
+﻿import { ChatWindow } from "@/components/chat/ChatWindow"
 
 function App() {
-  return (
-    <div className="p-8">
-      <Button>Click me</Button>
-    </div>
-  )
+  return <ChatWindow />
 }
 
 export default App
