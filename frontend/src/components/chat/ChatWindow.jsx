@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import ReactMarkdown from "react-markdown"
 import { Button } from "@/components/ui/button"
 import { useChat } from "@/hooks/useChat"
@@ -6,6 +6,11 @@ import { useChat } from "@/hooks/useChat"
 export function ChatWindow() {
   const { messages, isLoading, sendMessage } = useChat()
   const [input, setInput] = useState("")
+  const bottomRef = useRef(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages])
 
   function handleSubmit(e) {
     e.preventDefault()
@@ -30,15 +35,16 @@ export function ChatWindow() {
           </div>
         ))}
         {isLoading && (
-  <div className="flex items-center gap-2 text-gray-400 text-sm">
-    <span>Thinking</span>
-    <span className="flex gap-1">
-      <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
-      <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-      <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></span>
-    </span>
-  </div>
-)}
+          <div className="flex items-center gap-2 text-gray-400 text-sm">
+            <span>Thinking</span>
+            <span className="flex gap-1">
+              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></span>
+            </span>
+          </div>
+        )}
+        <div ref={bottomRef} />
       </div>
 
       <form onSubmit={handleSubmit} className="flex gap-2">
