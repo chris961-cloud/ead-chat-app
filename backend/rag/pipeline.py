@@ -80,7 +80,6 @@ def stream_answer(query: str):
             OLLAMA_URL,
             json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": True},
             stream=True,
-            timeout=10,  # connection/setup timeout, not total generation time
         )
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
