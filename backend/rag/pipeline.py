@@ -1,26 +1,36 @@
+import json
 import logging
 from langchain_huggingface import HuggingFaceEmbeddings
 from sentence_transformers import CrossEncoder
 import weaviate
 from weaviate.classes.query import MetadataQuery
 import requests
-import json
 
+# Configure logging to capture pipeline warnings and errors
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load models once, when the module is first imported (not on every request)
+# ── Model Initialization ──────────────────────────────────────────────────────
+# Pre-load embedding and reranker models once during module startup to avoid
+# high initialization latency on per-query requests.
 embedding_model = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
 reranker = CrossEncoder("BAAI/bge-reranker-v2-m3")
 
+# Pipeline Constants
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.2:1b"
 COLLECTION_NAME = "CISControls"
-RETRIEVAL_LIMIT = 10
-RERANK_TOP_N = 3
+RETRIEVAL_LIMIT = 10  # Number of candidate vector matches to retrieve initial scan
+RERANK_TOP_N = 3      # Top N chunks selected after cross-encoder reranking
 
 
-def retrieve_chunks(query: str, limit: int = RETRIEVAL_LIMIT):
+def retrieve_chunks(query: str, limit: int = RETRIEVAL_LIMIT) -> list[str]:
+    """Vector search against local Weaviate instance.
+
+    Converts the natural language query into a vector embedding using BGE-small,
+    queries the Weaviate 'CISControls' collection for nearest vector matches,
+    and returns a list of candidate chunk text strings.
+    """
     query_vector = embedding_model.embed_query(query)
 
     client = weaviate.connect_to_local()
@@ -38,7 +48,12 @@ def retrieve_chunks(query: str, limit: int = RETRIEVAL_LIMIT):
         client.close()
 
 
-def rerank_chunks(query: str, candidates: list[str], top_n: int = RERANK_TOP_N):
+def rerank_chunks(query: str, candidates: list[str], top_n: int = RERANK_TOP_N) -> list[str]:
+    """Reranks candidate chunks using a cross-encoder model.
+
+    Scores each (query, candidate) pair with BGE-reranker-v2-m3 to prioritize
+    the most relevant context chunks, returning the top_n results.
+    """
     pairs = [(query, candidate) for candidate in candidates]
     scores = reranker.predict(pairs)
     reranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
@@ -46,11 +61,14 @@ def rerank_chunks(query: str, candidates: list[str], top_n: int = RERANK_TOP_N):
 
 
 def build_prompt(query: str, top_chunks: list[str]) -> str:
-    context = "\n\n---\n\n".join(top_chunks)
-    return f"""Answer the question using ONLY the context below. If the context doesn't contain the answer, say so.
+    """Formats top context chunks into a grounded RAG prompt with bracket citations."""
+    numbered_context = "\n\n".join(
+        f"[{i+1}] {chunk}" for i, chunk in enumerate(top_chunks)
+    )
+    return f"""Answer the question using ONLY the context below. Cite your sources using the bracket numbers, like [1] or [2], right after the relevant sentence. If the context doesn't contain the answer, say so.
 
 Context:
-{context}
+{numbered_context}
 
 Question: {query}
 
@@ -58,8 +76,14 @@ Answer:"""
 
 
 def stream_answer(query: str):
-    """Generator that yields tokens from Ollama as they arrive.
-    Yields SSE-friendly text; on failure, yields a single [ERROR] message instead of raising.
+    """Generator yielding streaming text tokens from Ollama.
+
+    Workflow:
+      1. Performs vector retrieval against Weaviate.
+      2. Reranks candidate chunks with CrossEncoder.
+      3. Yields a special '[SOURCES]<json>' token carrying the top chunks.
+      4. Streams text tokens from Ollama line-by-line.
+      5. Yields '[ERROR]' formatted tokens on connection/service failure.
     """
     try:
         candidates = retrieve_chunks(query)
@@ -73,6 +97,11 @@ def stream_answer(query: str):
         return
 
     top_chunks = rerank_chunks(query, candidates)
+
+    # Send source metadata payload to client before response streaming begins
+    sources_payload = json.dumps(top_chunks)
+    yield f"[SOURCES]{sources_payload}"
+
     prompt = build_prompt(query, top_chunks)
 
     try:
@@ -93,4 +122,4 @@ def stream_answer(query: str):
             if "response" in data:
                 yield data["response"]
             if data.get("done"):
-                break
+                break
